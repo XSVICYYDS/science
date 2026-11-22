@@ -458,6 +458,8 @@ body {
     -webkit-backdrop-filter: blur(12px);
 }
 
+.annotation-toolbar[hidden] { display: none; }
+
 .annotation-toolbar-label {
     padding: 0 4px;
     color: var(--text-light);
@@ -500,6 +502,63 @@ body {
     white-space: nowrap;
 }
 
+.annotation-setting {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 0 4px;
+    color: var(--text-light);
+    font-size: .72rem;
+    white-space: nowrap;
+}
+
+.annotation-color {
+    width: 30px;
+    height: 30px;
+    padding: 2px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: #fff;
+    cursor: pointer;
+}
+
+.annotation-thickness {
+    width: 68px;
+    accent-color: var(--primary);
+    cursor: pointer;
+}
+
+.annotation-thickness-value {
+    min-width: 22px;
+    color: var(--text);
+    font-size: .72rem;
+    text-align: right;
+}
+
+.annotation-fab {
+    position: fixed;
+    right: 22px;
+    bottom: 88px;
+    z-index: 1201;
+    display: flex;
+    width: 56px;
+    height: 56px;
+    align-items: center;
+    justify-content: center;
+    border: 2px solid rgba(255,255,255,.9);
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--primary), var(--primary-light));
+    box-shadow: var(--shadow-lg);
+    color: #fff;
+    cursor: grab;
+    font-size: 1.45rem;
+    touch-action: none;
+    user-select: none;
+}
+
+.annotation-fab:active { cursor: grabbing; }
+.annotation-fab[hidden] { display: none; }
+
 .annotation-note-card {
     width: 240px;
     max-height: 112px;
@@ -537,6 +596,9 @@ body.annotation-active #annotationLayer[data-tool="highlight"] { cursor: crossha
     .annotation-hint { display: none; }
 
     .annotation-tool { padding: 5px 7px; font-size: .73rem; }
+    .annotation-setting { gap: 3px; padding: 0 2px; }
+    .annotation-thickness { width: 52px; }
+    .annotation-fab { right: 16px; bottom: 76px; width: 52px; height: 52px; }
 }
 
 /* 图片与模型展示 */
@@ -769,15 +831,25 @@ body.annotation-active #annotationLayer[data-tool="highlight"] { cursor: crossha
 <!-- 临时批注工具 -->
 <svg class="annotation-layer" id="annotationLayer" aria-hidden="true"></svg>
 <div class="annotation-toolbar" id="annotationToolbar" role="toolbar" aria-label="临时批注工具">
+    <button class="annotation-tool" id="annotationCollapse" type="button" aria-label="收起批注工具" title="收起为可拖动悬浮球">－</button>
     <span class="annotation-toolbar-label">临时标注</span>
     <button class="annotation-tool" type="button" data-annotation-tool="note" aria-pressed="false" title="点击页面位置添加文字批注">📝 批注</button>
     <button class="annotation-tool" type="button" data-annotation-tool="pen" aria-pressed="false" title="按住并拖动自由画笔">✏️ 画笔</button>
     <button class="annotation-tool" type="button" data-annotation-tool="circle" aria-pressed="false" title="拖动画出圈选">⭕ 圈画</button>
+    <button class="annotation-tool" type="button" data-annotation-tool="rectangle" aria-pressed="false" title="拖动画出矩形框">▭ 画框</button>
     <button class="annotation-tool" type="button" data-annotation-tool="highlight" aria-pressed="false" title="拖动高亮内容">🖍️ 高亮</button>
     <button class="annotation-tool" type="button" data-annotation-tool="erase" aria-pressed="false" title="点击擦除标注">🧽 橡皮</button>
+    <label class="annotation-setting" title="设置批注颜色">颜色
+        <input class="annotation-color" id="annotationColor" type="color" value="#dc2626" aria-label="批注颜色">
+    </label>
+    <label class="annotation-setting" title="设置画笔粗细">粗细
+        <input class="annotation-thickness" id="annotationThickness" type="range" min="1" max="24" value="3" aria-label="画笔粗细">
+        <output class="annotation-thickness-value" id="annotationThicknessValue" for="annotationThickness">3px</output>
+    </label>
     <button class="annotation-tool annotation-tool-clear" type="button" data-annotation-action="clear" title="清除所有临时标注">清除</button>
     <span class="annotation-hint" id="annotationHint">仅当前页面有效，刷新后清空</span>
 </div>
+<button class="annotation-fab" id="annotationFab" type="button" aria-label="展开批注工具" title="点击展开，拖动移动" hidden>✎</button>
 
 <!-- 图片灯箱 -->
 <div class="lightbox" id="lightbox">
@@ -1168,17 +1240,25 @@ let state = {
 // ===== 临时批注 =====
 const annotationLayer = document.getElementById("annotationLayer");
 const annotationToolbar = document.getElementById("annotationToolbar");
+const annotationFab = document.getElementById("annotationFab");
 const annotationHint = document.getElementById("annotationHint");
+const annotationColorInput = document.getElementById("annotationColor");
+const annotationThicknessInput = document.getElementById("annotationThickness");
+const annotationThicknessValue = document.getElementById("annotationThicknessValue");
 const annotationSvgNamespace = "http://www.w3.org/2000/svg";
 const annotationToolHints = {
     note: "点击页面位置添加文字批注",
     pen: "按住并拖动自由画笔",
     circle: "拖动画出圈选",
+    rectangle: "拖动画出矩形框",
     highlight: "拖动高亮内容",
     erase: "点击擦除标注"
 };
 let activeAnnotationTool = "";
 let activeAnnotationDrawing = null;
+let annotationColorCustomized = false;
+let annotationFabDrag = null;
+let suppressAnnotationFabClick = false;
 
 function updateAnnotationLayerSize() {
     const width = Math.max(document.documentElement.scrollWidth, window.innerWidth);
@@ -1186,6 +1266,16 @@ function updateAnnotationLayerSize() {
     annotationLayer.setAttribute("width", width);
     annotationLayer.setAttribute("height", height);
     annotationLayer.setAttribute("viewBox", `0 0 ${width} ${height}`);
+}
+
+function getAnnotationColor(tool) {
+    return tool === "highlight" && !annotationColorCustomized
+        ? "#facc15"
+        : annotationColorInput.value;
+}
+
+function getAnnotationThickness() {
+    return Number(annotationThicknessInput.value);
 }
 
 function setAnnotationTool(tool) {
@@ -1226,7 +1316,7 @@ function addAnnotationNote(point) {
     pin.setAttribute("cx", point.x);
     pin.setAttribute("cy", point.y);
     pin.setAttribute("r", "7");
-    pin.setAttribute("fill", "#dc2626");
+    pin.setAttribute("fill", getAnnotationColor("note"));
     group.appendChild(pin);
 
     const foreignObject = document.createElementNS(annotationSvgNamespace, "foreignObject");
@@ -1237,6 +1327,7 @@ function addAnnotationNote(point) {
     const card = document.createElement("div");
     card.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
     card.className = "annotation-note-card";
+    card.style.borderColor = getAnnotationColor("note");
     card.textContent = text.trim();
     foreignObject.appendChild(card);
     group.appendChild(foreignObject);
@@ -1274,6 +1365,83 @@ annotationToolbar.addEventListener("click", function(event) {
     }
 });
 
+annotationColorInput.addEventListener("input", function() {
+    annotationColorCustomized = true;
+});
+
+annotationThicknessInput.addEventListener("input", function() {
+    annotationThicknessValue.textContent = `${annotationThicknessInput.value}px`;
+});
+
+document.getElementById("annotationCollapse").addEventListener("click", function() {
+    setAnnotationTool("");
+    annotationToolbar.hidden = true;
+    annotationFab.hidden = false;
+});
+
+annotationFab.addEventListener("click", function() {
+    if (suppressAnnotationFabClick) {
+        suppressAnnotationFabClick = false;
+        return;
+    }
+    annotationFab.hidden = true;
+    annotationToolbar.hidden = false;
+});
+
+annotationFab.addEventListener("pointerdown", function(event) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const bounds = annotationFab.getBoundingClientRect();
+    annotationFabDrag = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        left: bounds.left,
+        top: bounds.top,
+        moved: false
+    };
+    annotationFab.setPointerCapture(event.pointerId);
+});
+
+annotationFab.addEventListener("pointermove", function(event) {
+    if (!annotationFabDrag || annotationFabDrag.pointerId !== event.pointerId) return;
+    const dx = event.clientX - annotationFabDrag.startX;
+    const dy = event.clientY - annotationFabDrag.startY;
+    if (Math.abs(dx) + Math.abs(dy) > 4) annotationFabDrag.moved = true;
+    if (!annotationFabDrag.moved) return;
+
+    const maxLeft = window.innerWidth - annotationFab.offsetWidth - 8;
+    const maxTop = window.innerHeight - annotationFab.offsetHeight - 8;
+    annotationFab.style.left = `${Math.max(8, Math.min(annotationFabDrag.left + dx, maxLeft))}px`;
+    annotationFab.style.top = `${Math.max(8, Math.min(annotationFabDrag.top + dy, maxTop))}px`;
+    annotationFab.style.right = "auto";
+    annotationFab.style.bottom = "auto";
+});
+
+function finishAnnotationFabDrag(event) {
+    if (!annotationFabDrag || annotationFabDrag.pointerId !== event.pointerId) return;
+    if (annotationFabDrag.moved) {
+        suppressAnnotationFabClick = true;
+        window.setTimeout(() => { suppressAnnotationFabClick = false; }, 0);
+    }
+    annotationFabDrag = null;
+    if (annotationFab.hasPointerCapture(event.pointerId)) {
+        annotationFab.releasePointerCapture(event.pointerId);
+    }
+}
+
+function keepAnnotationFabInViewport() {
+    if (!annotationFab.style.left || annotationFab.hidden) return;
+    const maxLeft = window.innerWidth - annotationFab.offsetWidth - 8;
+    const maxTop = window.innerHeight - annotationFab.offsetHeight - 8;
+    annotationFab.style.left = `${Math.max(8, Math.min(parseFloat(annotationFab.style.left), maxLeft))}px`;
+    annotationFab.style.top = `${Math.max(8, Math.min(parseFloat(annotationFab.style.top), maxTop))}px`;
+}
+
+annotationFab.addEventListener("pointerup", finishAnnotationFabDrag);
+annotationFab.addEventListener("pointercancel", finishAnnotationFabDrag);
+window.addEventListener("resize", keepAnnotationFabInViewport);
+
 annotationLayer.addEventListener("pointerdown", function(event) {
     const point = getAnnotationPoint(event);
     if (activeAnnotationTool === "note") {
@@ -1286,30 +1454,39 @@ annotationLayer.addEventListener("pointerdown", function(event) {
         eraseAnnotationAt(point);
         return;
     }
-    if (!["pen", "circle", "highlight"].includes(activeAnnotationTool)) return;
+    if (!["pen", "circle", "rectangle", "highlight"].includes(activeAnnotationTool)) return;
 
     event.preventDefault();
     annotationLayer.setPointerCapture(event.pointerId);
     const group = createAnnotationGroup(activeAnnotationTool);
-    if (activeAnnotationTool === "circle") {
-        const ellipse = document.createElementNS(annotationSvgNamespace, "ellipse");
-        ellipse.setAttribute("cx", point.x);
-        ellipse.setAttribute("cy", point.y);
-        ellipse.setAttribute("rx", "0");
-        ellipse.setAttribute("ry", "0");
-        ellipse.setAttribute("fill", "rgba(239,68,68,.08)");
-        ellipse.setAttribute("stroke", "#dc2626");
-        ellipse.setAttribute("stroke-width", "3");
-        group.appendChild(ellipse);
-        activeAnnotationDrawing = { type: "circle", origin: point, shape: ellipse };
+    if (activeAnnotationTool === "circle" || activeAnnotationTool === "rectangle") {
+        const isCircle = activeAnnotationTool === "circle";
+        const shape = document.createElementNS(annotationSvgNamespace, isCircle ? "ellipse" : "rect");
+        shape.setAttribute("fill", getAnnotationColor(activeAnnotationTool));
+        shape.setAttribute("fill-opacity", ".08");
+        shape.setAttribute("stroke", getAnnotationColor(activeAnnotationTool));
+        shape.setAttribute("stroke-width", getAnnotationThickness());
+        if (isCircle) {
+            shape.setAttribute("cx", point.x);
+            shape.setAttribute("cy", point.y);
+            shape.setAttribute("rx", "0");
+            shape.setAttribute("ry", "0");
+        } else {
+            shape.setAttribute("x", point.x);
+            shape.setAttribute("y", point.y);
+            shape.setAttribute("width", "0");
+            shape.setAttribute("height", "0");
+        }
+        group.appendChild(shape);
+        activeAnnotationDrawing = { type: activeAnnotationTool, origin: point, shape };
         return;
     }
 
     const path = document.createElementNS(annotationSvgNamespace, "path");
     path.setAttribute("d", `M ${point.x} ${point.y}`);
     path.setAttribute("fill", "none");
-    path.setAttribute("stroke", activeAnnotationTool === "highlight" ? "#facc15" : "#dc2626");
-    path.setAttribute("stroke-width", activeAnnotationTool === "highlight" ? "18" : "3");
+    path.setAttribute("stroke", getAnnotationColor(activeAnnotationTool));
+    path.setAttribute("stroke-width", getAnnotationThickness());
     path.setAttribute("stroke-linecap", "round");
     path.setAttribute("stroke-linejoin", "round");
     path.setAttribute("opacity", activeAnnotationTool === "highlight" ? ".48" : "1");
@@ -1320,12 +1497,23 @@ annotationLayer.addEventListener("pointerdown", function(event) {
 annotationLayer.addEventListener("pointermove", function(event) {
     if (!activeAnnotationDrawing) return;
     const point = getAnnotationPoint(event);
-    if (activeAnnotationDrawing.type === "circle") {
+    if (activeAnnotationDrawing.type === "circle" || activeAnnotationDrawing.type === "rectangle") {
         const { origin, shape } = activeAnnotationDrawing;
-        shape.setAttribute("cx", (origin.x + point.x) / 2);
-        shape.setAttribute("cy", (origin.y + point.y) / 2);
-        shape.setAttribute("rx", Math.abs(point.x - origin.x) / 2);
-        shape.setAttribute("ry", Math.abs(point.y - origin.y) / 2);
+        const left = Math.min(origin.x, point.x);
+        const top = Math.min(origin.y, point.y);
+        const width = Math.abs(point.x - origin.x);
+        const height = Math.abs(point.y - origin.y);
+        if (activeAnnotationDrawing.type === "circle") {
+            shape.setAttribute("cx", left + width / 2);
+            shape.setAttribute("cy", top + height / 2);
+            shape.setAttribute("rx", width / 2);
+            shape.setAttribute("ry", height / 2);
+        } else {
+            shape.setAttribute("x", left);
+            shape.setAttribute("y", top);
+            shape.setAttribute("width", width);
+            shape.setAttribute("height", height);
+        }
     } else {
         const path = activeAnnotationDrawing.path;
         path.setAttribute("d", `${path.getAttribute("d")} L ${point.x} ${point.y}`);
