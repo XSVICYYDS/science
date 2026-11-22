@@ -428,6 +428,117 @@ body {
 
 .back-to-top:hover { background: var(--primary-dark); transform: scale(1.1); }
 
+/* ===== 临时批注工具 ===== */
+.annotation-layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 997;
+    overflow: visible;
+    pointer-events: none;
+}
+
+.annotation-toolbar {
+    position: fixed;
+    left: 50%;
+    bottom: 20px;
+    transform: translateX(-50%);
+    z-index: 1200;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    max-width: calc(100vw - 24px);
+    padding: 8px 10px;
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: rgba(255,255,255,.96);
+    box-shadow: var(--shadow-lg);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+}
+
+.annotation-toolbar-label {
+    padding: 0 4px;
+    color: var(--text-light);
+    font-size: .75rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.annotation-tool {
+    min-height: 34px;
+    padding: 5px 9px;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+    font: inherit;
+    font-size: .78rem;
+    white-space: nowrap;
+    transition: var(--transition);
+}
+
+.annotation-tool:hover { background: var(--primary-bg); color: var(--primary); }
+
+.annotation-tool.active {
+    border-color: var(--primary);
+    background: var(--primary);
+    color: #fff;
+}
+
+.annotation-tool-clear {
+    border-color: var(--border);
+    color: var(--text-light);
+}
+
+.annotation-hint {
+    padding: 0 5px;
+    color: var(--text-light);
+    font-size: .72rem;
+    white-space: nowrap;
+}
+
+.annotation-note-card {
+    width: 240px;
+    max-height: 112px;
+    overflow: auto;
+    padding: 8px 10px;
+    border: 1px solid #f59e0b;
+    border-radius: 8px;
+    background: #fffbeb;
+    box-shadow: var(--shadow-md);
+    color: #78350f;
+    font: 13px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+body.annotation-active #annotationLayer {
+    pointer-events: all;
+    touch-action: none;
+}
+
+body.annotation-active #annotationLayer[data-tool="note"] { cursor: copy; }
+body.annotation-active #annotationLayer[data-tool="erase"] { cursor: cell; }
+body.annotation-active #annotationLayer[data-tool="pen"],
+body.annotation-active #annotationLayer[data-tool="circle"],
+body.annotation-active #annotationLayer[data-tool="highlight"] { cursor: crosshair; }
+
+@media (max-width: 600px) {
+    .annotation-toolbar {
+        bottom: 10px;
+        gap: 3px;
+        padding: 6px;
+    }
+
+    .annotation-toolbar-label,
+    .annotation-hint { display: none; }
+
+    .annotation-tool { padding: 5px 7px; font-size: .73rem; }
+}
+
 /* 图片与模型展示 */
 .item-images {
     margin-top: 12px;
@@ -654,6 +765,19 @@ body {
 
 <!-- 回到顶部 -->
 <button class="back-to-top" id="backToTop" title="回到顶部">↑</button>
+
+<!-- 临时批注工具 -->
+<svg class="annotation-layer" id="annotationLayer" aria-hidden="true"></svg>
+<div class="annotation-toolbar" id="annotationToolbar" role="toolbar" aria-label="临时批注工具">
+    <span class="annotation-toolbar-label">临时标注</span>
+    <button class="annotation-tool" type="button" data-annotation-tool="note" aria-pressed="false" title="点击页面位置添加文字批注">📝 批注</button>
+    <button class="annotation-tool" type="button" data-annotation-tool="pen" aria-pressed="false" title="按住并拖动自由画笔">✏️ 画笔</button>
+    <button class="annotation-tool" type="button" data-annotation-tool="circle" aria-pressed="false" title="拖动画出圈选">⭕ 圈画</button>
+    <button class="annotation-tool" type="button" data-annotation-tool="highlight" aria-pressed="false" title="拖动高亮内容">🖍️ 高亮</button>
+    <button class="annotation-tool" type="button" data-annotation-tool="erase" aria-pressed="false" title="点击擦除标注">🧽 橡皮</button>
+    <button class="annotation-tool annotation-tool-clear" type="button" data-annotation-action="clear" title="清除所有临时标注">清除</button>
+    <span class="annotation-hint" id="annotationHint">仅当前页面有效，刷新后清空</span>
+</div>
 
 <!-- 图片灯箱 -->
 <div class="lightbox" id="lightbox">
@@ -1041,6 +1165,186 @@ let state = {
     sort: "default"
 };
 
+// ===== 临时批注 =====
+const annotationLayer = document.getElementById("annotationLayer");
+const annotationToolbar = document.getElementById("annotationToolbar");
+const annotationHint = document.getElementById("annotationHint");
+const annotationSvgNamespace = "http://www.w3.org/2000/svg";
+const annotationToolHints = {
+    note: "点击页面位置添加文字批注",
+    pen: "按住并拖动自由画笔",
+    circle: "拖动画出圈选",
+    highlight: "拖动高亮内容",
+    erase: "点击擦除标注"
+};
+let activeAnnotationTool = "";
+let activeAnnotationDrawing = null;
+
+function updateAnnotationLayerSize() {
+    const width = Math.max(document.documentElement.scrollWidth, window.innerWidth);
+    const height = Math.max(document.documentElement.scrollHeight, document.body.scrollHeight);
+    annotationLayer.setAttribute("width", width);
+    annotationLayer.setAttribute("height", height);
+    annotationLayer.setAttribute("viewBox", `0 0 ${width} ${height}`);
+}
+
+function setAnnotationTool(tool) {
+    activeAnnotationTool = activeAnnotationTool === tool ? "" : tool;
+    annotationLayer.dataset.tool = activeAnnotationTool;
+    document.body.classList.toggle("annotation-active", Boolean(activeAnnotationTool));
+    annotationToolbar.querySelectorAll("[data-annotation-tool]").forEach(button => {
+        const isActive = button.dataset.annotationTool === activeAnnotationTool;
+        button.classList.toggle("active", isActive);
+        button.setAttribute("aria-pressed", String(isActive));
+    });
+    annotationHint.textContent = activeAnnotationTool
+        ? annotationToolHints[activeAnnotationTool]
+        : "仅当前页面有效，刷新后清空";
+}
+
+function createAnnotationGroup(kind) {
+    const group = document.createElementNS(annotationSvgNamespace, "g");
+    group.classList.add("annotation-mark");
+    group.dataset.kind = kind;
+    annotationLayer.appendChild(group);
+    return group;
+}
+
+function getAnnotationPoint(event) {
+    return { x: event.clientX + window.scrollX, y: event.clientY + window.scrollY };
+}
+
+function addAnnotationNote(point) {
+    const text = window.prompt("输入临时批注（刷新页面后会清空）：");
+    if (!text || !text.trim()) return;
+
+    const noteWidth = 260;
+    const x = Math.max(8, Math.min(point.x + 12, document.documentElement.scrollWidth - noteWidth - 8));
+    const y = point.y + 12;
+    const group = createAnnotationGroup("note");
+    const pin = document.createElementNS(annotationSvgNamespace, "circle");
+    pin.setAttribute("cx", point.x);
+    pin.setAttribute("cy", point.y);
+    pin.setAttribute("r", "7");
+    pin.setAttribute("fill", "#dc2626");
+    group.appendChild(pin);
+
+    const foreignObject = document.createElementNS(annotationSvgNamespace, "foreignObject");
+    foreignObject.setAttribute("x", x);
+    foreignObject.setAttribute("y", y);
+    foreignObject.setAttribute("width", noteWidth);
+    foreignObject.setAttribute("height", "120");
+    const card = document.createElement("div");
+    card.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
+    card.className = "annotation-note-card";
+    card.textContent = text.trim();
+    foreignObject.appendChild(card);
+    group.appendChild(foreignObject);
+}
+
+function eraseAnnotationAt(point) {
+    const marks = Array.from(annotationLayer.querySelectorAll(".annotation-mark")).reverse();
+    for (const mark of marks) {
+        const bounds = mark.getBBox();
+        const padding = 18;
+        if (point.x >= bounds.x - padding && point.x <= bounds.x + bounds.width + padding &&
+            point.y >= bounds.y - padding && point.y <= bounds.y + bounds.height + padding) {
+            mark.remove();
+            return;
+        }
+    }
+}
+
+function clearAnnotations() {
+    annotationLayer.replaceChildren();
+    activeAnnotationDrawing = null;
+}
+
+annotationToolbar.addEventListener("click", function(event) {
+    const button = event.target.closest("button");
+    if (!button) return;
+
+    if (button.dataset.annotationTool) {
+        setAnnotationTool(button.dataset.annotationTool);
+    } else if (button.dataset.annotationAction === "clear") {
+        if (annotationLayer.childElementCount && window.confirm("清除所有临时标注？")) {
+            clearAnnotations();
+            setAnnotationTool("");
+        }
+    }
+});
+
+annotationLayer.addEventListener("pointerdown", function(event) {
+    const point = getAnnotationPoint(event);
+    if (activeAnnotationTool === "note") {
+        event.preventDefault();
+        addAnnotationNote(point);
+        return;
+    }
+    if (activeAnnotationTool === "erase") {
+        event.preventDefault();
+        eraseAnnotationAt(point);
+        return;
+    }
+    if (!["pen", "circle", "highlight"].includes(activeAnnotationTool)) return;
+
+    event.preventDefault();
+    annotationLayer.setPointerCapture(event.pointerId);
+    const group = createAnnotationGroup(activeAnnotationTool);
+    if (activeAnnotationTool === "circle") {
+        const ellipse = document.createElementNS(annotationSvgNamespace, "ellipse");
+        ellipse.setAttribute("cx", point.x);
+        ellipse.setAttribute("cy", point.y);
+        ellipse.setAttribute("rx", "0");
+        ellipse.setAttribute("ry", "0");
+        ellipse.setAttribute("fill", "rgba(239,68,68,.08)");
+        ellipse.setAttribute("stroke", "#dc2626");
+        ellipse.setAttribute("stroke-width", "3");
+        group.appendChild(ellipse);
+        activeAnnotationDrawing = { type: "circle", origin: point, shape: ellipse };
+        return;
+    }
+
+    const path = document.createElementNS(annotationSvgNamespace, "path");
+    path.setAttribute("d", `M ${point.x} ${point.y}`);
+    path.setAttribute("fill", "none");
+    path.setAttribute("stroke", activeAnnotationTool === "highlight" ? "#facc15" : "#dc2626");
+    path.setAttribute("stroke-width", activeAnnotationTool === "highlight" ? "18" : "3");
+    path.setAttribute("stroke-linecap", "round");
+    path.setAttribute("stroke-linejoin", "round");
+    path.setAttribute("opacity", activeAnnotationTool === "highlight" ? ".48" : "1");
+    group.appendChild(path);
+    activeAnnotationDrawing = { type: activeAnnotationTool, path };
+});
+
+annotationLayer.addEventListener("pointermove", function(event) {
+    if (!activeAnnotationDrawing) return;
+    const point = getAnnotationPoint(event);
+    if (activeAnnotationDrawing.type === "circle") {
+        const { origin, shape } = activeAnnotationDrawing;
+        shape.setAttribute("cx", (origin.x + point.x) / 2);
+        shape.setAttribute("cy", (origin.y + point.y) / 2);
+        shape.setAttribute("rx", Math.abs(point.x - origin.x) / 2);
+        shape.setAttribute("ry", Math.abs(point.y - origin.y) / 2);
+    } else {
+        const path = activeAnnotationDrawing.path;
+        path.setAttribute("d", `${path.getAttribute("d")} L ${point.x} ${point.y}`);
+    }
+});
+
+function finishAnnotationDrawing(event) {
+    if (!activeAnnotationDrawing) return;
+    activeAnnotationDrawing = null;
+    if (annotationLayer.hasPointerCapture(event.pointerId)) {
+        annotationLayer.releasePointerCapture(event.pointerId);
+    }
+}
+
+annotationLayer.addEventListener("pointerup", finishAnnotationDrawing);
+annotationLayer.addEventListener("pointercancel", finishAnnotationDrawing);
+window.addEventListener("resize", updateAnnotationLayerSize);
+document.getElementById("contentArea").addEventListener("load", updateAnnotationLayerSize, true);
+
 // ===== 工具函数 =====
 function escapeHtml(str) {
     return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -1224,6 +1528,7 @@ function renderContent() {
             <h3>未找到匹配内容</h3>
             <p>试试更换关键词，或切换类别筛选</p>
         </div>`;
+        requestAnimationFrame(updateAnnotationLayerSize);
         return;
     }
 
@@ -1235,6 +1540,7 @@ function renderContent() {
         html += renderItem(item, state.keyword);
     });
     area.innerHTML = html;
+    requestAnimationFrame(updateAnnotationLayerSize);
 }
 
 // ===== 事件绑定 =====
