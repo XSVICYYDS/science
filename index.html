@@ -439,6 +439,15 @@ body {
     pointer-events: none;
 }
 
+.annotation-ink-canvas {
+    position: fixed;
+    inset: 0;
+    z-index: 996;
+    width: 100vw;
+    height: 100vh;
+    pointer-events: none;
+}
+
 .annotation-toolbar {
     position: fixed;
     left: 50%;
@@ -830,6 +839,7 @@ body.annotation-active #annotationLayer[data-tool="highlight"] { cursor: crossha
 <button class="back-to-top" id="backToTop" title="回到顶部">↑</button>
 
 <!-- 临时批注工具 -->
+<canvas class="annotation-ink-canvas" id="annotationInkCanvas" aria-hidden="true"></canvas>
 <svg class="annotation-layer" id="annotationLayer" aria-hidden="true"></svg>
 <div class="annotation-toolbar" id="annotationToolbar" role="toolbar" aria-label="临时批注工具">
     <button class="annotation-tool" id="annotationCollapse" type="button" aria-label="收起批注工具" title="收起为可拖动悬浮球">－</button>
@@ -1240,6 +1250,7 @@ let state = {
 
 // ===== 临时批注 =====
 const annotationLayer = document.getElementById("annotationLayer");
+const annotationInkCanvas = document.getElementById("annotationInkCanvas");
 const annotationToolbar = document.getElementById("annotationToolbar");
 const annotationFab = document.getElementById("annotationFab");
 const annotationHint = document.getElementById("annotationHint");
@@ -1257,6 +1268,7 @@ const annotationToolHints = {
 };
 let activeAnnotationTool = "";
 let activeAnnotationDrawing = null;
+const annotationInkStrokes = [];
 let annotationColorCustomized = false;
 let annotationFabDrag = null;
 let suppressAnnotationFabClick = false;
@@ -1330,14 +1342,39 @@ function getPressureStrokeWidth(pressure, tool) {
 }
 
 function appendVariableWidthSegment(drawing, pathData, pressure) {
-    const path = document.createElementNS(annotationSvgNamespace, "path");
-    path.setAttribute("d", pathData);
-    path.setAttribute("fill", "none");
-    path.setAttribute("stroke", drawing.color);
-    path.setAttribute("stroke-width", getPressureStrokeWidth(pressure, drawing.type));
-    path.setAttribute("stroke-linecap", "round");
-    path.setAttribute("stroke-linejoin", "round");
-    drawing.group.appendChild(path);
+    const strokeWidth = getPressureStrokeWidth(pressure, drawing.type);
+    drawing.segments.push({ pathData, strokeWidth });
+    drawing.hitPathData += ` ${pathData.replace(/^M\s*/, "M ")}`;
+    drawing.hitPath.setAttribute("d", drawing.hitPathData);
+}
+
+function redrawAnnotationInk() {
+    const context = annotationInkCanvas.getContext("2d");
+    if (!context) return;
+
+    const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+    const width = Math.max(1, Math.round(window.innerWidth * pixelRatio));
+    const height = Math.max(1, Math.round(window.innerHeight * pixelRatio));
+    if (annotationInkCanvas.width !== width || annotationInkCanvas.height !== height) {
+        annotationInkCanvas.width = width;
+        annotationInkCanvas.height = height;
+    }
+
+    context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+    context.clearRect(0, 0, window.innerWidth, window.innerHeight);
+    context.translate(-window.scrollX, -window.scrollY);
+
+    for (const stroke of annotationInkStrokes) {
+        context.strokeStyle = stroke.color;
+        context.globalAlpha = stroke.opacity;
+        context.lineCap = "round";
+        context.lineJoin = "round";
+        for (const segment of stroke.segments) {
+            context.lineWidth = segment.strokeWidth;
+            context.stroke(new Path2D(segment.pathData));
+        }
+    }
+    context.globalAlpha = 1;
 }
 
 function appendSmoothAnnotationSamples(drawing, events) {
@@ -1399,6 +1436,7 @@ function flushPendingAnnotationStroke(drawing) {
     if (!drawing.pendingPoints.length) return;
     const points = drawing.pendingPoints.splice(0);
     appendSmoothAnnotationSamples(drawing, points);
+    redrawAnnotationInk();
 }
 
 function addAnnotationNote(point) {
@@ -1438,6 +1476,11 @@ function eraseAnnotationAt(point) {
         if (point.x >= bounds.x - padding && point.x <= bounds.x + bounds.width + padding &&
             point.y >= bounds.y - padding && point.y <= bounds.y + bounds.height + padding) {
             mark.remove();
+            const remainingStrokes = annotationInkStrokes.filter(stroke => stroke.group !== mark);
+            if (remainingStrokes.length !== annotationInkStrokes.length) {
+                annotationInkStrokes.splice(0, annotationInkStrokes.length, ...remainingStrokes);
+                redrawAnnotationInk();
+            }
             return;
         }
     }
@@ -1445,7 +1488,9 @@ function eraseAnnotationAt(point) {
 
 function clearAnnotations() {
     annotationLayer.replaceChildren();
+    annotationInkStrokes.length = 0;
     activeAnnotationDrawing = null;
+    redrawAnnotationInk();
 }
 
 annotationToolbar.addEventListener("click", function(event) {
@@ -1587,18 +1632,20 @@ annotationLayer.addEventListener("pointerdown", function(event) {
         timeStamp: event.timeStamp
     };
     if (activeAnnotationTool === "highlight") group.setAttribute("opacity", ".48");
-    const path = document.createElementNS(annotationSvgNamespace, "path");
-    path.setAttribute("d", `M ${point.x} ${point.y} L ${point.x} ${point.y}`);
-    path.setAttribute("fill", "none");
-    path.setAttribute("stroke", getAnnotationColor(activeAnnotationTool));
-    path.setAttribute("stroke-width", getPressureStrokeWidth(sample.pressure, activeAnnotationTool));
-    path.setAttribute("stroke-linecap", "round");
-    path.setAttribute("stroke-linejoin", "round");
-    group.appendChild(path);
-    activeAnnotationDrawing = {
+    const hitPath = document.createElementNS(annotationSvgNamespace, "path");
+    hitPath.setAttribute("d", `M ${point.x} ${point.y}`);
+    hitPath.setAttribute("fill", "none");
+    hitPath.setAttribute("stroke", "transparent");
+    hitPath.setAttribute("stroke-width", Math.max(24, getAnnotationThickness() * 1.5));
+    group.appendChild(hitPath);
+    const drawing = {
         type: activeAnnotationTool,
         group,
+        hitPath,
+        hitPathData: `M ${point.x} ${point.y}`,
         color: getAnnotationColor(activeAnnotationTool),
+        opacity: activeAnnotationTool === "highlight" ? .48 : 1,
+        segments: [],
         lastPoint: sample,
         renderedPoint: point,
         samples: [sample],
@@ -1606,6 +1653,10 @@ annotationLayer.addEventListener("pointerdown", function(event) {
         pendingFrame: null,
         hasMoved: false
     };
+    annotationInkStrokes.push(drawing);
+    activeAnnotationDrawing = drawing;
+    appendVariableWidthSegment(drawing, `M ${point.x} ${point.y} L ${point.x} ${point.y}`, sample.pressure);
+    redrawAnnotationInk();
 });
 
 annotationLayer.addEventListener("pointermove", function(event) {
@@ -1652,6 +1703,7 @@ function finishAnnotationDrawing(event) {
                 drawing.lastPoint.pressure
             );
         }
+        redrawAnnotationInk();
     }
     activeAnnotationDrawing = null;
     if (annotationLayer.hasPointerCapture(event.pointerId)) {
@@ -1662,6 +1714,8 @@ function finishAnnotationDrawing(event) {
 annotationLayer.addEventListener("pointerup", finishAnnotationDrawing);
 annotationLayer.addEventListener("pointercancel", finishAnnotationDrawing);
 window.addEventListener("resize", updateAnnotationLayerSize);
+window.addEventListener("resize", redrawAnnotationInk);
+window.addEventListener("scroll", redrawAnnotationInk, { passive: true });
 document.getElementById("contentArea").addEventListener("load", updateAnnotationLayerSize, true);
 
 // ===== 工具函数 =====
