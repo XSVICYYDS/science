@@ -1481,8 +1481,21 @@ function eraseAnnotationAt(point) {
                 annotationInkStrokes.splice(0, annotationInkStrokes.length, ...remainingStrokes);
                 redrawAnnotationInk();
             }
-            return;
+            return true;
         }
+    }
+    return false;
+}
+
+function eraseAnnotationsAlong(from, to) {
+    const distance = Math.hypot(to.x - from.x, to.y - from.y);
+    const steps = Math.max(1, Math.ceil(distance / 10));
+    for (let step = 1; step <= steps; step++) {
+        const progress = step / steps;
+        eraseAnnotationAt({
+            x: from.x + (to.x - from.x) * progress,
+            y: from.y + (to.y - from.y) * progress
+        });
     }
 }
 
@@ -1593,6 +1606,8 @@ annotationLayer.addEventListener("pointerdown", function(event) {
     }
     if (activeAnnotationTool === "erase") {
         event.preventDefault();
+        annotationLayer.setPointerCapture(event.pointerId);
+        activeAnnotationDrawing = { type: "erase", lastPoint: point };
         eraseAnnotationAt(point);
         return;
     }
@@ -1661,6 +1676,14 @@ annotationLayer.addEventListener("pointerdown", function(event) {
 
 annotationLayer.addEventListener("pointermove", function(event) {
     if (!activeAnnotationDrawing) return;
+    if (activeAnnotationDrawing.type === "erase") {
+        for (const sample of getAnnotationPointerSamples(event)) {
+            const point = getAnnotationPoint(sample);
+            eraseAnnotationsAlong(activeAnnotationDrawing.lastPoint, point);
+            activeAnnotationDrawing.lastPoint = point;
+        }
+        return;
+    }
     const point = getAnnotationPoint(event);
     if (activeAnnotationDrawing.type === "circle" || activeAnnotationDrawing.type === "rectangle") {
         const { origin, shape } = activeAnnotationDrawing;
