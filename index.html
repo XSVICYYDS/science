@@ -1369,9 +1369,20 @@ function redrawAnnotationInk() {
         context.globalAlpha = stroke.opacity;
         context.lineCap = "round";
         context.lineJoin = "round";
-        for (const segment of stroke.segments) {
-            context.lineWidth = segment.strokeWidth;
-            context.stroke(new Path2D(segment.pathData));
+        if (stroke.type === "highlight") {
+            const highlightPath = new Path2D();
+            for (const segment of stroke.segments) {
+                highlightPath.addPath(new Path2D(segment.pathData));
+            }
+            if (stroke.segments.length) {
+                context.lineWidth = stroke.segments[0].strokeWidth;
+                context.stroke(highlightPath);
+            }
+        } else {
+            for (const segment of stroke.segments) {
+                context.lineWidth = segment.strokeWidth;
+                context.stroke(new Path2D(segment.pathData));
+            }
         }
     }
     context.globalAlpha = 1;
