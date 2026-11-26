@@ -1313,19 +1313,55 @@ function getAnnotationPointerSamples(event) {
 }
 
 function appendSmoothAnnotationSamples(drawing, events) {
+    let pathChanged = false;
     for (const event of events) {
         const point = getAnnotationPoint(event);
         const previous = drawing.lastPoint;
-        if (Math.hypot(point.x - previous.x, point.y - previous.y) < .35) continue;
+        if (Math.hypot(point.x - previous.x, point.y - previous.y) < .5) continue;
 
-        const midpointX = (previous.x + point.x) / 2;
-        const midpointY = (previous.y + point.y) / 2;
-        drawing.pathData += ` Q ${previous.x} ${previous.y} ${midpointX} ${midpointY}`;
+        drawing.samples.push(point);
+        if (drawing.samples.length === 2) {
+            const midpoint = {
+                x: (previous.x + point.x) / 2,
+                y: (previous.y + point.y) / 2
+            };
+            drawing.pathData += ` Q ${previous.x} ${previous.y} ${midpoint.x} ${midpoint.y}`;
+            drawing.renderedPoint = midpoint;
+        } else {
+            const first = drawing.samples[drawing.samples.length - 3];
+            const middle = previous;
+            const midpoint = {
+                x: (middle.x + point.x) / 2,
+                y: (middle.y + point.y) / 2
+            };
+            const control1 = {
+                x: drawing.renderedPoint.x + (middle.x - first.x) / 6,
+                y: drawing.renderedPoint.y + (middle.y - first.y) / 6
+            };
+            const control2 = {
+                x: midpoint.x - (point.x - first.x) / 6,
+                y: midpoint.y - (point.y - first.y) / 6
+            };
+            drawing.pathData += ` C ${control1.x} ${control1.y} ${control2.x} ${control2.y} ${midpoint.x} ${midpoint.y}`;
+            drawing.renderedPoint = midpoint;
+            drawing.samples.shift();
+        }
         drawing.lastPoint = point;
         drawing.hasMoved = true;
+        pathChanged = true;
     }
 
-    drawing.path.setAttribute("d", drawing.pathData);
+    if (pathChanged) drawing.path.setAttribute("d", drawing.pathData);
+}
+
+function flushPendingAnnotationStroke(drawing) {
+    if (drawing.pendingFrame !== null) {
+        window.cancelAnimationFrame(drawing.pendingFrame);
+        drawing.pendingFrame = null;
+    }
+    if (!drawing.pendingPoints.length) return;
+    const points = drawing.pendingPoints.splice(0);
+    appendSmoothAnnotationSamples(drawing, points);
 }
 
 function addAnnotationNote(point) {
@@ -1520,6 +1556,10 @@ annotationLayer.addEventListener("pointerdown", function(event) {
         path,
         pathData: `M ${point.x} ${point.y}`,
         lastPoint: point,
+        renderedPoint: point,
+        samples: [point],
+        pendingPoints: [],
+        pendingFrame: null,
         hasMoved: false
     };
 });
@@ -1545,7 +1585,13 @@ annotationLayer.addEventListener("pointermove", function(event) {
             shape.setAttribute("height", height);
         }
     } else {
-        appendSmoothAnnotationSamples(activeAnnotationDrawing, getAnnotationPointerSamples(event));
+        const drawing = activeAnnotationDrawing;
+        drawing.pendingPoints.push(...getAnnotationPointerSamples(event));
+        if (drawing.pendingFrame === null) {
+            drawing.pendingFrame = window.requestAnimationFrame(() => {
+                if (activeAnnotationDrawing === drawing) flushPendingAnnotationStroke(drawing);
+            });
+        }
     }
 });
 
@@ -1553,7 +1599,8 @@ function finishAnnotationDrawing(event) {
     if (!activeAnnotationDrawing) return;
     const drawing = activeAnnotationDrawing;
     if (drawing.path) {
-        appendSmoothAnnotationSamples(drawing, getAnnotationPointerSamples(event));
+        drawing.pendingPoints.push(...getAnnotationPointerSamples(event));
+        flushPendingAnnotationStroke(drawing);
         if (drawing.hasMoved) {
             drawing.pathData += ` Q ${drawing.lastPoint.x} ${drawing.lastPoint.y} ${drawing.lastPoint.x} ${drawing.lastPoint.y}`;
             drawing.path.setAttribute("d", drawing.pathData);
