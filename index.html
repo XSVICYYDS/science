@@ -1305,6 +1305,29 @@ function getAnnotationPoint(event) {
     return { x: event.clientX + window.scrollX, y: event.clientY + window.scrollY };
 }
 
+function getAnnotationPointerSamples(event) {
+    const samples = typeof event.getCoalescedEvents === "function"
+        ? event.getCoalescedEvents()
+        : [];
+    return samples.length ? samples : [event];
+}
+
+function appendSmoothAnnotationSamples(drawing, events) {
+    for (const event of events) {
+        const point = getAnnotationPoint(event);
+        const previous = drawing.lastPoint;
+        if (Math.hypot(point.x - previous.x, point.y - previous.y) < .35) continue;
+
+        const midpointX = (previous.x + point.x) / 2;
+        const midpointY = (previous.y + point.y) / 2;
+        drawing.pathData += ` Q ${previous.x} ${previous.y} ${midpointX} ${midpointY}`;
+        drawing.lastPoint = point;
+        drawing.hasMoved = true;
+    }
+
+    drawing.path.setAttribute("d", drawing.pathData);
+}
+
 function addAnnotationNote(point) {
     const text = window.prompt("输入临时批注（刷新页面后会清空）：");
     if (!text || !text.trim()) return;
@@ -1492,7 +1515,13 @@ annotationLayer.addEventListener("pointerdown", function(event) {
     path.setAttribute("stroke-linejoin", "round");
     path.setAttribute("opacity", activeAnnotationTool === "highlight" ? ".48" : "1");
     group.appendChild(path);
-    activeAnnotationDrawing = { type: activeAnnotationTool, path };
+    activeAnnotationDrawing = {
+        type: activeAnnotationTool,
+        path,
+        pathData: `M ${point.x} ${point.y}`,
+        lastPoint: point,
+        hasMoved: false
+    };
 });
 
 annotationLayer.addEventListener("pointermove", function(event) {
@@ -1516,13 +1545,22 @@ annotationLayer.addEventListener("pointermove", function(event) {
             shape.setAttribute("height", height);
         }
     } else {
-        const path = activeAnnotationDrawing.path;
-        path.setAttribute("d", `${path.getAttribute("d")} L ${point.x} ${point.y}`);
+        appendSmoothAnnotationSamples(activeAnnotationDrawing, getAnnotationPointerSamples(event));
     }
 });
 
 function finishAnnotationDrawing(event) {
     if (!activeAnnotationDrawing) return;
+    const drawing = activeAnnotationDrawing;
+    if (drawing.path) {
+        appendSmoothAnnotationSamples(drawing, getAnnotationPointerSamples(event));
+        if (drawing.hasMoved) {
+            drawing.pathData += ` Q ${drawing.lastPoint.x} ${drawing.lastPoint.y} ${drawing.lastPoint.x} ${drawing.lastPoint.y}`;
+            drawing.path.setAttribute("d", drawing.pathData);
+        } else {
+            drawing.path.setAttribute("d", `M ${drawing.lastPoint.x} ${drawing.lastPoint.y} L ${drawing.lastPoint.x} ${drawing.lastPoint.y}`);
+        }
+    }
     activeAnnotationDrawing = null;
     if (annotationLayer.hasPointerCapture(event.pointerId)) {
         annotationLayer.releasePointerCapture(event.pointerId);
