@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>独立白板 · 中考复习</title>
+<link rel="stylesheet" href="assets/css/whiteboard.css">
+</head>
+<body class="wb-body">
+
+<!-- 独立白板界面：与 index.html 的批注工具栏、批注层完全分离 -->
+<div class="wb-stage" id="wbStage">
+    <canvas class="wb-canvas" id="wbCanvas" aria-label="白板画布"></canvas>
+    <div class="wb-notes" id="wbNotes" aria-hidden="true"></div>
+    <div class="wb-empty" id="wbEmpty">自由画图讲解 · 选择工具开始</div>
+</div>
+
+<header class="wb-header">
+    <div class="wb-brand"><span class="wb-brand-icon">🎨</span><span>独立白板</span></div>
+    <div class="wb-header-actions">
+        <span class="wb-save-state" id="wbSaveState">仅本地保存</span>
+        <a class="wb-exit" href="index.html" title="退出白板并返回复习页（Esc）">← 返回复习</a>
+    </div>
+</header>
+
+<div class="wb-toolbar" id="wbToolbar" role="toolbar" aria-label="白板工具">
+    <button class="wb-tool active" type="button" data-wb-tool="pen" aria-pressed="true" title="画笔：自由绘制，笔锋随压感/速度变化">✏️ 画笔</button>
+    <button class="wb-tool" type="button" data-wb-tool="note" aria-pressed="false" title="批注：点击画布添加文字">📝 批注</button>
+    <button class="wb-tool" type="button" data-wb-tool="erase" aria-pressed="false" title="擦除：点击或拖动擦除笔画与批注">🧽 擦除</button>
+    <span class="wb-sep"></span>
+    <label class="wb-setting" title="画笔颜色">颜色
+        <input class="wb-color" id="wbColor" type="color" value="#dc2626" aria-label="白板画笔颜色">
+    </label>
+    <label class="wb-setting" title="画笔粗细">粗细
+        <input class="wb-width" id="wbWidth" type="range" min="1" max="32" value="4" aria-label="白板画笔粗细">
+        <output class="wb-width-value" id="wbWidthValue" for="wbWidth">4px</output>
+    </label>
+    <span class="wb-sep"></span>
+    <button class="wb-tool" id="wbUndo" type="button" title="撤销上一步（Ctrl+Z）">↶ 撤销</button>
+    <button class="wb-tool wb-tool-clear" id="wbClear" type="button" title="清空白板（仅清白板，不影响文章批注）">🗑 清空</button>
+    <span class="wb-hint" id="wbHint">画笔：按住拖动绘制 · 批注：点击添加文字 · 擦除：点击笔画移除</span>
+</div>
+
+<!-- 文字批注输入浮层（独立层，不与批注模块共享 DOM） -->
+<div class="wb-note-editor" id="wbNoteEditor" hidden>
+    <input type="text" id="wbNoteInput" maxlength="120" placeholder="输入批注文字，回车确认…" autocomplete="off">
+    <button type="button" id="wbNoteOk">确定</button>
+    <button type="button" id="wbNoteCancel">取消</button>
+</div>
+
+<script src="assets/js/ink-core.js"></script>
+<script src="assets/js/whiteboard.js"></script>
+</body>
+</html>
